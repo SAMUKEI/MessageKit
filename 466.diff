@@ -1,0 +1,134 @@
+diff --git a/Example/Sources/MockMessage.swift b/Example/Sources/MockMessage.swift
+index de49c2a8..224fbcf8 100644
+--- a/Example/Sources/MockMessage.swift
++++ b/Example/Sources/MockMessage.swift
+@@ -49,7 +49,7 @@ struct MockMessage: MessageType {
+ 	}
+ 
+     init(image: UIImage, sender: Sender, messageId: String, date: Date) {
+-        self.init(data: .photo(image), sender: sender, messageId: messageId, date: date)
++        self.init(data: .photo(url: nil, image: image), sender: sender, messageId: messageId, date: date)
+     }
+ 
+     init(thumbnail: UIImage, sender: Sender, messageId: String, date: Date) {
+diff --git a/Sources/Controllers/MessagesViewController+Delegate.swift b/Sources/Controllers/MessagesViewController+Delegate.swift
+index cd0d27a1..9e544eee 100644
+--- a/Sources/Controllers/MessagesViewController+Delegate.swift
++++ b/Sources/Controllers/MessagesViewController+Delegate.swift
+@@ -93,8 +93,9 @@ extension MessagesViewController: UICollectionViewDelegateFlowLayout {
+             pasteBoard.string = text
+         case .attributedText(let attributedText):
+             pasteBoard.string = attributedText.string
+-        case .photo(let image):
+-            pasteBoard.image = image
++        case .photo(_, _):
++            guard let cell = collectionView.cellForItem(at: indexPath) as? MediaMessageCell else { return }
++            pasteBoard.image = cell.imageView.image
+         default:
+             break
+         }
+diff --git a/Sources/Models/MessageData.swift b/Sources/Models/MessageData.swift
+index 1cc13e0d..5da83f9c 100644
+--- a/Sources/Models/MessageData.swift
++++ b/Sources/Models/MessageData.swift
+@@ -41,10 +41,10 @@ public enum MessageData {
+     case attributedText(NSAttributedString)
+ 
+     /// A photo message.
+-    case photo(UIImage)
++    case photo(url: URL?, image: UIImage?)
+ 
+     /// A video message.
+-    case video(file: URL, thumbnail: UIImage)
++    case video(file: URL, thumbnail: UIImage?)
+ 
+     /// A location message.
+     case location(CLLocation)
+diff --git a/Sources/Protocols/MessagesDisplayDelegate.swift b/Sources/Protocols/MessagesDisplayDelegate.swift
+index e5620dc0..e68d9539 100644
+--- a/Sources/Protocols/MessagesDisplayDelegate.swift
++++ b/Sources/Protocols/MessagesDisplayDelegate.swift
+@@ -164,6 +164,19 @@ public protocol MessagesDisplayDelegate: AnyObject {
+     ///   - messagesCollectionView: The collection view requesting the information
+     /// - Returns: Your customized animation block.
+     func animationBlockForLocation(message: MessageType, at indexPath: IndexPath, in messagesCollectionView: MessagesCollectionView) -> ((UIImageView) -> Void)?
++    
++    // MARK: - Media Messages Defaults
++    
++    /// Configure `MediaMessageCell`‘s image.
++    ///
++    /// - Parameters:
++    ///   - imageView: The `imageView` of the cell.
++    ///   - message: The `MessageType` that will be displayed by this cell.
++    ///   - indexPath: The `IndexPath` of the cell.
++    ///   - messagesCollectionView: The `MessagesCollectionView` in which this cell will be displayed.
++    ///
++    /// The default do nothing.
++    func configureMediaMessageImageView(_ imageView: UIImageView, for message: MessageType, at indexPath: IndexPath, in messagesCollectionView: MessagesCollectionView)
+ }
+ 
+ public extension MessagesDisplayDelegate {
+@@ -239,5 +252,9 @@ public extension MessagesDisplayDelegate {
+     func animationBlockForLocation(message: MessageType, at indexPath: IndexPath, in messagesCollectionView: MessagesCollectionView) -> ((UIImageView) -> Void)? {
+         return nil
+     }
++    
++    // MARK: - Media Messages Defaults
++    
++    func configureMediaMessageImageView(_ imageView: UIImageView, for message: MessageType, at indexPath: IndexPath, in messagesCollectionView: MessagesCollectionView) {}
+ 
+ }
+diff --git a/Sources/Protocols/MessagesLayoutDelegate.swift b/Sources/Protocols/MessagesLayoutDelegate.swift
+index f1be3042..4d8bac19 100644
+--- a/Sources/Protocols/MessagesLayoutDelegate.swift
++++ b/Sources/Protocols/MessagesLayoutDelegate.swift
+@@ -261,7 +261,8 @@ public extension MessagesLayoutDelegate {
+ 
+     func heightForMedia(message: MessageType, at indexPath: IndexPath, with maxWidth: CGFloat, in messagesCollectionView: MessagesCollectionView) -> CGFloat {
+         switch message.data {
+-        case .photo(let image), .video(_, let image):
++        case .photo(_, let image), .video(_, let image):
++            guard let image = image else { return 0 }
+             let boundingRect = CGRect(origin: .zero, size: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
+             return AVMakeRect(aspectRatio: image.size, insideRect: boundingRect).height
+         default:
+diff --git a/Sources/Views/Cells/MediaMessageCell.swift b/Sources/Views/Cells/MediaMessageCell.swift
+index 3a915b86..c399a26d 100644
+--- a/Sources/Views/Cells/MediaMessageCell.swift
++++ b/Sources/Views/Cells/MediaMessageCell.swift
+@@ -54,8 +54,13 @@ open class MediaMessageCell: MessageCollectionViewCell {
+ 
+     open override func configure(with message: MessageType, at indexPath: IndexPath, and messagesCollectionView: MessagesCollectionView) {
+         super.configure(with: message, at: indexPath, and: messagesCollectionView)
++        
++        guard let displayDelegate = messagesCollectionView.messagesDisplayDelegate else {
++            fatalError(MessageKitError.nilMessagesDisplayDelegate)
++        }
++        
+         switch message.data {
+-        case .photo(let image):
++        case .photo(_, let image):
+             imageView.image = image
+             playButtonView.isHidden = true
+         case .video(_, let image):
+@@ -64,5 +69,7 @@ open class MediaMessageCell: MessageCollectionViewCell {
+         default:
+             break
+         }
++        
++        displayDelegate.configureMediaMessageImageView(imageView, for: message, at: indexPath, in: messagesCollectionView)
+     }
+ }
+diff --git a/Tests/Mocks/MockMessage.swift b/Tests/Mocks/MockMessage.swift
+index a3e0dc32..be26b5a3 100644
+--- a/Tests/Mocks/MockMessage.swift
++++ b/Tests/Mocks/MockMessage.swift
+@@ -48,7 +48,7 @@ struct MockMessage: MessageType {
+     }
+ 
+     init(image: UIImage, sender: Sender, messageId: String) {
+-        self.init(data: .photo(image), sender: sender, messageId: messageId)
++        self.init(data: .photo(url: nil, image: image), sender: sender, messageId: messageId)
+     }
+ 
+     init(thumbnail: UIImage, sender: Sender, messageId: String) {
